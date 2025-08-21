@@ -1,0 +1,40 @@
+# Cloudflare Worker 配置文件示例
+# 复制此文件为 wrangler.toml 并根据需要修改配置
+
+name = "gemini-anti-truncation"
+main = "src/index.js"
+compatibility_date = "2024-04-05"
+
+[observability.logs]
+enabled = true
+
+[vars]
+# --- 核心配置 ---
+# 上游 Gemini API 地址 (必填)
+# 选项1: 使用官方 Gemini API
+UPSTREAM_URL_BASE = "https://generativelanguage.googleapis.com"
+
+# 选项2: 使用 GPTLoad 代理 (推荐，可能更稳定)
+# UPSTREAM_URL_BASE = "https://<你的gptload地址>/proxy/gemini"
+
+# 单次请求的最大重试次数 (可选, 默认为 10)
+# 建议设置为 20 以获得更好的防截断效果
+MAX_RETRIES = 20
+
+# 调试模式 (可选, 默认为 true)
+# 生产环境建议设置为 "false"
+DEBUG_MODE = "true"
+
+# 思维链引导词 (可选, 默认为 "Here's a")
+START_OF_THOUGHT = "Here's a"
+
+# --- 可选配置 ---
+# 如果需要自定义域名，可以添加以下配置
+# [env.production]
+# name = "gemini-anti-truncation-prod"
+# vars = { DEBUG_MODE = "false" }
+
+# 如果需要设置路由，可以添加以下配置
+# [[routes]]
+# pattern = "your-domain.com/*"
+# zone_name = "your-domain.com"
