@@ -14,6 +14,7 @@ import {
 } from "./constants.js";
 import {
   isCherryRequest,
+  detectClientType,
   injectSystemPrompts,
   isResponseComplete,
   isFormalResponseStarted,
@@ -22,6 +23,7 @@ import {
   buildUpstreamRequest,
   parseParts,
   isStructuredOutputRequest,
+  cleanResponseParts,
 } from "./core.js";
 import { logDebug, jsonError } from "./utils.js";
 
@@ -133,14 +135,24 @@ export async function handleNonStreamingRequest(request, config, url) {
 
         if (isThoughtFinished && isResponseComplete(formalAccumulatedText)) {
           logDebug(config.debugMode, "Non-streaming response is complete.");
+          
+          // 检测客户端类型
+          const clientInfo = detectClientType(request);
+          logDebug(config.debugMode, `Client detected: ${clientInfo.userAgent}, compatibility mode: ${clientInfo.isCompatibilityMode}`);
+          
           // Clean the final text and reconstruct the parts array
           const finalParts = [];
           // Add thought accumulated text
-          finalParts.push({ text: thoughtAccumulatedText, thought: true });
+          if (thoughtAccumulatedText) {
+            finalParts.push({ text: thoughtAccumulatedText, thought: true });
+          }
           // Add the cleaned response text
           finalParts.push({ text: cleanFinalText(formalAccumulatedText) });
 
-          responseJson.candidates[0].content.parts = finalParts;
+          // 应用兼容性清理
+          const cleanedParts = cleanResponseParts(finalParts, clientInfo.isCompatibilityMode);
+          responseJson.candidates[0].content.parts = cleanedParts;
+          
           return new Response(JSON.stringify(responseJson), {
             status: 200,
             headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" },
@@ -176,6 +188,10 @@ export async function handleNonStreamingRequest(request, config, url) {
   // If the loop finishes, all retries have been used up.
   logDebug(config.debugMode, "Max retries reached for non-streaming request.");
 
+  // 检测客户端类型
+  const clientInfo = detectClientType(request);
+  logDebug(config.debugMode, `Final response - Client: ${clientInfo.userAgent}, compatibility: ${clientInfo.isCompatibilityMode}`);
+  
   // Construct final response with all accumulated thought parts and incomplete text
   const finalParts = [];
   // Add thought accumulated text if it exists
@@ -185,10 +201,13 @@ export async function handleNonStreamingRequest(request, config, url) {
   // Add the incomplete text, ensuring any partial tokens are cleaned.
   finalParts.push({ text: `${cleanFinalText(formalAccumulatedText)}\n${INCOMPLETE_TOKEN}` });
 
+  // 应用兼容性清理
+  const cleanedParts = cleanResponseParts(finalParts, clientInfo.isCompatibilityMode);
+  
   const finalJson = {
     candidates: [{
       content: {
-        parts: finalParts
+        parts: cleanedParts
       },
       finishReason: "MAX_RETRIES"
     }]
@@ -226,8 +245,9 @@ export async function handleStreamingRequest(request, config, url) {
     return fetch(upstreamRequest);
   }
 
-  // 检查是不是Cherry Studio客户端的请求
-  let isFromCherryRequest = isCherryRequest(request);
+  // 检测客户端类型
+  const clientInfo = detectClientType(request);
+  logDebug(config.debugMode, `Streaming client detected: ${clientInfo.userAgent}, compatibility mode: ${clientInfo.isCompatibilityMode}`);
 
   // 处理 thinkingBudget
   let injectBeginTokenPrompt = true;
@@ -484,7 +504,9 @@ export async function handleStreamingRequest(request, config, url) {
                   finalParts.push({ text: finalText });
                 }
 
-                finalPayload.candidates[0].content.parts = finalParts;
+                // 应用兼容性清理
+                const cleanedParts = cleanResponseParts(finalParts, clientInfo.isCompatibilityMode);
+                finalPayload.candidates[0].content.parts = cleanedParts;
                 finalPayload.candidates[0].finishReason = "STOP";
 
                 writer.write(encoder.encode(`data: ${JSON.stringify(finalPayload)}\n\n`));
@@ -552,9 +574,20 @@ export async function handleStreamingRequest(request, config, url) {
     try {
       if (writer.desiredSize !== null && writer.desiredSize > 0) {
         logDebug(config.debugMode, "Sending SSE heartbeat.");
+        let heartbeatContent;
+        if (clientInfo.isCompatibilityMode) {
+          // 兼容模式：不发送 thought 属性
+          heartbeatContent = { parts: [{ text: "" }], role: "model" };
+        } else {
+          // 正常模式：根据状态决定是否添加 thought
+          heartbeatContent = (clientInfo.isCherryStudio || isThoughtFinished) ? 
+            { parts: [{ text: "" }], role: "model" } : 
+            { parts: [{ text: "", thought: true }], role: "model" };
+        }
+        
         const heartbeatPayload = {
           candidates: [{
-            content: isFromCherryRequest || isThoughtFinished ? { parts: [{ text: "" }], role: "model" } : { parts: [{ text: "", thought: true }], role: "model" },
+            content: heartbeatContent,
             index: 0
           }]
         };

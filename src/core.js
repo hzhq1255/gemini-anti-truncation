@@ -31,12 +31,29 @@ export function normalizeSystemInstruction(body) {
 }
 
 /**
- * 
- * @param {object} body 
+ * 检测是否为需要特殊处理的客户端请求
+ * @param {Request} request 
+ * @returns {object} 包含客户端类型信息的对象
+ */
+export function detectClientType(request) {
+  const userAgent = request.headers.get("User-Agent") || "";
+  
+  return {
+    isCherryStudio: userAgent.includes("CherryStudio"),
+    isGeminiCLI: userAgent.includes("gemini-cli") || userAgent.includes("google-ai-cli"),
+    isClaudeCode: userAgent.includes("Claude") || userAgent.includes("claude-code") || userAgent.includes("Anthropic"),
+    isCompatibilityMode: userAgent.includes("gemini-cli") || userAgent.includes("google-ai-cli") || userAgent.includes("curl") || userAgent.includes("Claude") || userAgent.includes("claude-code") || userAgent.includes("Anthropic"),
+    userAgent
+  };
+}
+
+/**
+ * 向后兼容的函数
+ * @param {Request} request 
  * @returns {boolean}
  */
-export function isCherryRequest(body) {
-  return body.headers.has("User-Agent") && body.headers.get("User-Agent").includes("CherryStudio");
+export function isCherryRequest(request) {
+  return detectClientType(request).isCherryStudio;
 }
 
 /**
@@ -219,6 +236,28 @@ export function cleanFinalText(text, cleanBeginToken = true, cleanFinishToken = 
   }
 
   return cleanedText;
+}
+
+/**
+ * 清理响应部分，移除兼容性问题的属性
+ * @param {Array} parts - 响应的 parts 数组
+ * @param {boolean} compatibilityMode - 是否启用兼容模式
+ * @returns {Array} 清理后的 parts 数组
+ */
+export function cleanResponseParts(parts, compatibilityMode = false) {
+  if (!Array.isArray(parts)) {
+    return parts;
+  }
+
+  return parts.map(part => {
+    if (compatibilityMode && part.thought !== undefined) {
+      // 兼容模式下移除 thought 属性
+      const cleanPart = { ...part };
+      delete cleanPart.thought;
+      return cleanPart;
+    }
+    return part;
+  });
 }
 
 /**
